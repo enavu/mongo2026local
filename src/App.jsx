@@ -89,6 +89,10 @@ export function App() {
   const [showDrift, setShowDrift] = useState(false);
   const [driftForm, setDriftForm] = useState({ feature: 'vectorSearch', driver: 'node', driverVersion: '6.8.0', serverVersion: '9.0.0', searchType: 'ann' });
   const [drift, setDrift] = useState(null);
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const [upgradeForm, setUpgradeForm] = useState({ from: '7.0', to: '8.0' });
+  const [upgrade, setUpgrade] = useState(null);
+  const [upgradeStatus, setUpgradeStatus] = useState('idle');
   const [showQuery, setShowQuery] = useState(false);
   const [question, setQuestion] = useState('');
   const [asked, setAsked] = useState(false);
@@ -125,35 +129,6 @@ export function App() {
 
   useEffect(() => { if (scenarioId && !asked) load(scenarioId, mode); }, [scenarioId, mode, asked, load]);
 
-  const ask = useCallback(async (text, activeMode) => {
-    if (!text.trim()) return;
-    setStatus('loading');
-    setAsked(true);
-    setResult(null);
-    setStage(0);
-    try {
-      const response = await fetch('/api/ask', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, mode: activeMode }),
-      });
-      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error ?? 'ask-failed');
-      setResult(await response.json());
-      setStatus('ready');
-    } catch (error) {
-      setStatus(error.message === 'mongo-unavailable' ? 'unavailable' : 'error');
-    }
-  }, []);
-
-  const pickScenario = (id) => { setAsked(false); setScenarioId(id); };
-  const runDrift = useCallback(async (form) => {
-    setDrift(null);
-    const response = await fetch('/api/drift', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-    if (response.ok) setDrift(await response.json());
-  }, []);
-
   const searchChangelog = useCallback(async (text) => {
     if (!text.trim()) return;
     setChlogStatus('loading');
@@ -171,6 +146,55 @@ export function App() {
     }
   }, []);
 
+  const ask = useCallback(async (text, activeMode) => {
+    if (!text.trim()) return;
+    setStatus('loading');
+    setAsked(true);
+    setResult(null);
+    setStage(0);
+    try {
+      const response = await fetch('/api/ask', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, mode: activeMode }),
+      });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error ?? 'ask-failed');
+      const data = await response.json();
+      setResult(data);
+      setStatus('ready');
+      // Curated corrections can't answer everything; fall back to the changelog corpus.
+      if (!data.evidence?.length || data.state === 'empty') {
+        setShowChangelog(true);
+        setChlogQuery(text);
+        searchChangelog(text);
+      }
+    } catch (error) {
+      setStatus(error.message === 'mongo-unavailable' ? 'unavailable' : 'error');
+    }
+  }, [searchChangelog]);
+
+  const pickScenario = (id) => { setAsked(false); setScenarioId(id); };
+  const runDrift = useCallback(async (form) => {
+    setDrift(null);
+    const response = await fetch('/api/drift', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form),
+    });
+    if (response.ok) setDrift(await response.json());
+  }, []);
+
+  const loadUpgrade = useCallback(async (to) => {
+    setUpgradeStatus('loading');
+    try {
+      const response = await fetch(`/api/upgrade?to=${encodeURIComponent(to)}`);
+      if (!response.ok) throw new Error('upgrade-failed');
+      setUpgrade(await response.json());
+      setUpgradeStatus('ready');
+    } catch {
+      setUpgrade(null);
+      setUpgradeStatus('error');
+    }
+  }, []);
+
   const reset = () => {
     setStage(0); setInspected(null); setShowQuery(false);
     if (asked) ask(question, mode); else if (scenarioId) load(scenarioId, mode);
@@ -181,6 +205,11 @@ export function App() {
     ? evidence.filter((record) => record._id === baselineId)
     : evidence;
   const tone = TONE[result?.state] ?? TONE.empty;
+  // Question answered from the changelog corpus, not the curated resolve flow.
+  const changelogAnswer = asked && status === 'ready' && evidence.length === 0;
+  const driftFeature = compat?.features.find((f) => f.feature === driftForm.feature) ?? null;
+  const driftHasEnn = (driftFeature?.searchTypes ?? []).includes('enn');
+  const driftHasDrivers = (driftFeature?.drivers ?? []).length > 0;
 
   return (
     <div className="shell">
@@ -228,12 +257,12 @@ export function App() {
       {asked ? (
         <section className="question-card">
           <div className="question-lead">
-            <p className="context">Your question · {result?.subject ?? 'resolving…'}</p>
+            <p className="context">{changelogAnswer ? 'Your question' : `Your question · ${result?.subject ?? 'resolving…'}`}</p>
             <h2>{result?.question ?? question}</h2>
           </div>
           <dl className="facts">
             <div><dt>Source scope</dt><dd>{result?.selected?.scope ?? result?.baseline?.scope ?? '—'}</dd></div>
-            <div><dt>State</dt><dd>{result?.state ?? 'loading'}</dd></div>
+            <div><dt>State</dt><dd>{changelogAnswer ? 'changelog' : (result?.state ?? 'loading')}</dd></div>
             <div><dt>Mode</dt><dd>{mode === 'mongodb' ? 'Live MongoDB' : 'Rehearsal fixtures'}</dd></div>
           </dl>
         </section>
@@ -251,18 +280,20 @@ export function App() {
         </section>
       )}
 
-      <ol className="stages">
-        {STAGES.map((item, index) => {
-          const Icon = item.icon;
-          const state = index === stage ? 'current' : index < stage ? 'done' : 'upcoming';
-          return (
-            <li key={item.id} className={`stage ${state}`}>
-              <span className="stage-index"><Icon size={16} aria-hidden="true" /></span>
-              <span className="stage-text"><strong>{item.label}</strong><span>{item.blurb}</span></span>
-            </li>
-          );
-        })}
-      </ol>
+      {!changelogAnswer && (
+        <ol className="stages">
+          {STAGES.map((item, index) => {
+            const Icon = item.icon;
+            const state = index === stage ? 'current' : index < stage ? 'done' : 'upcoming';
+            return (
+              <li key={item.id} className={`stage ${state}`}>
+                <span className="stage-index"><Icon size={16} aria-hidden="true" /></span>
+                <span className="stage-text"><strong>{item.label}</strong><span>{item.blurb}</span></span>
+              </li>
+            );
+          })}
+        </ol>
+      )}
 
       <section className="panel" aria-live="polite">
         {status === 'loading' && <p className="hint">Running query…</p>}
@@ -271,7 +302,9 @@ export function App() {
         )}
         {status === 'error' && <p className="hint warn">The query could not run. Check the API process.</p>}
         {status === 'ready' && evidence.length === 0 && (
-          <p className="hint warn">{result?.reason ?? 'No applicable source for this scenario and cutoff.'}</p>
+          asked
+            ? <p className="hint">Not in memory — answering from the live MongoDB changelog below.</p>
+            : <p className="hint warn">{result?.reason ?? 'No applicable source for this scenario and cutoff.'}</p>
         )}
         {status === 'ready' && evidence.length > 0 && (
           <div className="evidence">
@@ -327,22 +360,28 @@ export function App() {
                 {compat.features.map((f) => <option key={f.feature} value={f.feature}>{f.label}</option>)}
               </select>
             </label>
-            <label>Search
-              <select value={driftForm.searchType} onChange={(e) => setDriftForm({ ...driftForm, searchType: e.target.value })}>
-                <option value="ann">ANN</option><option value="enn">ENN</option>
-              </select>
-            </label>
+            {driftHasEnn && (
+              <label>Search
+                <select value={driftForm.searchType} onChange={(e) => setDriftForm({ ...driftForm, searchType: e.target.value })}>
+                  <option value="ann">ANN</option><option value="enn">ENN</option>
+                </select>
+              </label>
+            )}
             <label>Server version
               <input value={driftForm.serverVersion} onChange={(e) => setDriftForm({ ...driftForm, serverVersion: e.target.value })} placeholder="9.0.0" />
             </label>
-            <label>Driver
-              <select value={driftForm.driver} onChange={(e) => setDriftForm({ ...driftForm, driver: e.target.value })}>
-                {(compat.features.find((f) => f.feature === driftForm.feature)?.drivers ?? []).map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </label>
-            <label>Driver version
-              <input value={driftForm.driverVersion} onChange={(e) => setDriftForm({ ...driftForm, driverVersion: e.target.value })} placeholder="6.8.0" />
-            </label>
+            {driftHasDrivers && (
+              <>
+                <label>Driver
+                  <select value={driftForm.driver} onChange={(e) => setDriftForm({ ...driftForm, driver: e.target.value })}>
+                    {(driftFeature?.drivers ?? []).map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </label>
+                <label>Driver version
+                  <input value={driftForm.driverVersion} onChange={(e) => setDriftForm({ ...driftForm, driverVersion: e.target.value })} placeholder="6.8.0" />
+                </label>
+              </>
+            )}
             <button className="primary" onClick={() => runDrift(driftForm)}>Check drift</button>
           </div>
           {drift && (
@@ -352,6 +391,57 @@ export function App() {
               {drift.driver && <p>{drift.driver.name} driver {drift.driver.version}: {!drift.driver.known ? 'unknown driver' : drift.driver.ok ? 'meets minimum' : `needs ${drift.driver.required}`}</p>}
               {drift.reasons.length > 0 && <p className="driftreasons">{drift.reasons.join('; ')}</p>}
               <p className="dialog-link">{drift.source.url}</p>
+            </div>
+          )}
+        </section>
+      )}
+
+      {showUpgrade && compat && (
+        <section className="changelogpanel">
+          <div className="driftpanel-head">Upgrade impact — what changes when you move between versions?</div>
+          <div className="driftform">
+            <label>From
+              <select value={upgradeForm.from} onChange={(e) => setUpgradeForm({ ...upgradeForm, from: e.target.value })}>
+                {compat.serverVersions.map((v) => <option key={v.line} value={v.line}>{v.line}</option>)}
+              </select>
+            </label>
+            <label>To
+              <select value={upgradeForm.to} onChange={(e) => { const to = e.target.value; setUpgradeForm({ ...upgradeForm, to }); loadUpgrade(to); }}>
+                {compat.serverVersions.filter((v) => v.line !== '6.0').map((v) => (
+                  <option key={v.line} value={v.line}>{v.line}{v.status === 'upcoming' ? ' (pre-GA)' : ''}</option>
+                ))}
+              </select>
+            </label>
+            <button className="primary" onClick={() => loadUpgrade(upgradeForm.to)}>Show changes</button>
+          </div>
+          {upgradeStatus === 'loading' && <p className="hint">Querying Atlas…</p>}
+          {upgradeStatus === 'error' && <p className="hint warn">The upgrade lookup could not run.</p>}
+          {upgradeStatus === 'ready' && upgrade && (
+            <div className="evidence">
+              {compat.serverVersions.find((v) => v.line === upgrade.to)?.status === 'upcoming' && (
+                <p className="hint warn">{upgrade.to} is pre-GA — these changes are provisional and may still change before release.</p>
+              )}
+              <p className="record-meta">Upgrading to {upgrade.to} — {upgrade.changes.length} breaking, {upgrade.gains.length} gains</p>
+              <div className="upgradecols">
+                <div className="upgradecol">
+                  <p className="upgradecol-head cost"><AlertTriangle size={14} aria-hidden="true" /> What breaks</p>
+                  {upgrade.changes.map((change, index) => (
+                    <a key={index} className="record" href={change.url ?? '#'} target="_blank" rel="noreferrer">
+                      <span className="record-head"><span className="record-title">{change.title}</span></span>
+                      {change.text && <span className="record-value">{change.text.slice(0, 160)}{change.text.length > 160 ? '…' : ''}</span>}
+                    </a>
+                  ))}
+                </div>
+                <div className="upgradecol">
+                  <p className="upgradecol-head gain"><CheckCircle2 size={14} aria-hidden="true" /> What you gain</p>
+                  {upgrade.gains.map((gain, index) => (
+                    <a key={index} className="record" href={gain.url ?? '#'} target="_blank" rel="noreferrer">
+                      <span className="record-head"><span className="record-title">{gain.title}</span></span>
+                      {gain.text && <span className="record-value">{gain.text.slice(0, 160)}{gain.text.length > 160 ? '…' : ''}</span>}
+                    </a>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
         </section>
@@ -377,7 +467,11 @@ export function App() {
           {chlogStatus === 'error' && <p className="hint warn">The changelog search could not run.</p>}
           {chlogStatus === 'ready' && chlog && (
             <div className="evidence">
-              <p className="record-meta">{chlog.results.length} matches · {chlog.durationMs} ms round-trip to Atlas</p>
+              {chlog.results[0] && chlog.results[0].score < 0.7 ? (
+                <p className="hint warn">No strong changelog match — this reads like a usage question. The release notes cover what changed, not how to use a feature.</p>
+              ) : (
+                <p className="record-meta">{chlog.results.length} matches · {chlog.durationMs} ms round-trip to Atlas</p>
+              )}
               {chlog.results.map((hit, index) => (
                 <a key={index} className="record" href={hit.url ?? '#'} target="_blank" rel="noreferrer">
                   <span className="record-head">
@@ -385,6 +479,7 @@ export function App() {
                     <span className="record-title">{hit.title}</span>
                     <span className="score">{hit.score.toFixed(3)}</span>
                   </span>
+                  {hit.text && <span className="record-value">{hit.text.slice(0, 220)}{hit.text.length > 220 ? '…' : ''}</span>}
                   <span className="record-meta">
                     {hit.version ? `v${hit.version}` : 'release note'}
                     {hit.date ? ` · ${hit.date}` : ''}
@@ -425,11 +520,17 @@ export function App() {
           disabled={!compat} aria-pressed={showDrift}>
           {showDrift ? 'Hide drift' : 'Drift check'}
         </button>
+        <button className={showUpgrade ? 'ghost active' : 'ghost'}
+          onClick={() => { setShowUpgrade((value) => !value); if (!upgrade) loadUpgrade(upgradeForm.to); }}
+          disabled={!compat} aria-pressed={showUpgrade}>
+          {showUpgrade ? 'Hide upgrade' : 'Upgrade impact'}
+        </button>
         <button className={showChangelog ? 'ghost active' : 'ghost'}
           onClick={() => { setShowChangelog((value) => !value); if (!chlog) searchChangelog(chlogQuery); }}
           aria-pressed={showChangelog}>
           {showChangelog ? 'Hide changelog' : 'Changelog corpus'}
         </button>
+        <a className="ghost" href="/galaxy" target="_blank" rel="noreferrer">Vector galaxy ↗</a>
         <div className="spacer" />
         <button className="ghost" onClick={() => setStage((value) => Math.max(0, value - 1))} disabled={stage === 0}>
           Back

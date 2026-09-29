@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vector Galaxy — the changelog as an embedding space</title>
+<style>
+  :root {
+    --bg: #05070f; --ink: #eef2fb; --muted: #9aa8c7; --line: #1c2740;
+    --v9: #00ed64; --v8: #4aa3ff; --v7: #b088f9; --sh: #f5a524; --q: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: 'Manrope Variable', system-ui, -apple-system, sans-serif; overflow: hidden; }
+  canvas { position: fixed; inset: 0; display: block; }
+  .ui { position: fixed; inset: 0; pointer-events: none; }
+  .top { position: absolute; top: 24px; left: 50%; transform: translateX(-50%);
+    width: min(680px, 92vw); pointer-events: auto; }
+  .brand { text-align: center; color: var(--muted); font-size: 13px; letter-spacing: 0.14em;
+    text-transform: uppercase; margin: 0 0 10px; }
+  .brand b { color: var(--v9); }
+  form { display: flex; gap: 10px; }
+  input { flex: 1; background: rgba(12,18,32,0.85); border: 1px solid var(--line); color: var(--ink);
+    padding: 14px 16px; border-radius: 12px; font: inherit; font-size: 16px; backdrop-filter: blur(6px); }
+  input:focus { outline: none; border-color: var(--v9); }
+  button { background: var(--v9); color: #04160c; border: 0; border-radius: 12px; padding: 0 22px;
+    font: inherit; font-weight: 700; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
+  .chip { pointer-events: auto; background: rgba(12,18,32,0.7); border: 1px solid var(--line);
+    color: var(--muted); border-radius: 999px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .chip:hover { color: var(--ink); border-color: var(--v9); }
+  .sepbtn { display: block; margin: 12px auto 0; background: rgba(12,18,32,0.7); border: 1px solid var(--line);
+    color: var(--muted); border-radius: 999px; padding: 8px 18px; font: inherit; font-size: 13px;
+    cursor: pointer; pointer-events: auto; }
+  .sepbtn:hover { color: var(--ink); border-color: var(--v9); }
+  .sepbtn.on { border-color: var(--v9); color: var(--v9); background: rgba(0,237,100,0.08); }
+  .sepnote { text-align: center; color: var(--muted); font-size: 11px; margin-top: 6px; opacity: 0.85; max-width: 620px; margin-left: auto; margin-right: auto; }
+  .answer { position: absolute; left: 24px; bottom: 24px; width: min(440px, 92vw);
+    background: rgba(8,12,22,0.86); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px 18px; backdrop-filter: blur(8px); pointer-events: auto; display: none; }
+  .answer.show { display: block; }
+  .answer .h { display: flex; align-items: baseline; gap: 10px; }
+  .answer .t { font-weight: 700; font-size: 15px; }
+  .answer .s { margin-left: auto; font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    color: var(--v9); font-size: 13px; }
+  .answer .x { color: var(--muted); font-size: 13px; line-height: 1.45; margin: 8px 0 0;
+    max-height: 96px; overflow: hidden; }
+  .answer .m { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .answer .warn { color: var(--sh); }
+  .legend { position: absolute; right: 24px; bottom: 24px; display: grid; gap: 6px;
+    background: rgba(8,12,22,0.7); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+    font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; }
+  .stat { position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
+    font-family: 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); font-size: 13px; text-align: center; }
+  .stat b { color: var(--v9); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="ui">
+  <div class="top">
+    <p class="brand">Vector Galaxy · <b id="count">…</b> real MongoDB changelog sections in Atlas</p>
+    <form id="f">
+      <input id="q" placeholder="Ask the changelog by meaning…" maxlength="200" value="what is new in MongoDB 9.0" />
+      <button id="go" type="submit">Search</button>
+    </form>
+    <div class="chips" id="chips"></div>
+    <button type="button" id="septog" class="sepbtn">Show release separation</button>
+    <div class="sepnote" id="sepnote" hidden>Topical separation — how different the wording is, not upgrade risk. Real risk = the breaking-change count.</div>
+  </div>
+  <div class="answer" id="answer">
+    <div class="h"><span class="t" id="a-title"></span><span class="s" id="a-score"></span></div>
+    <p class="x" id="a-text"></p>
+    <p class="m" id="a-meta"></p>
+  </div>
+  <div class="legend">
+    <div><i style="background:var(--v9)"></i>MongoDB 9.0</div>
+    <div><i style="background:var(--v8)"></i>MongoDB 8.0</div>
+    <div><i style="background:var(--v7)"></i>MongoDB 7.0</div>
+    <div><i style="background:var(--sh)"></i>mongosh / other</div>
+  </div>
+  <div class="stat" id="stat"></div>
+</div>
+<script>
+const CHIPS = ['queryable encryption', 'server status metrics renamed', 'what was deprecated in 7.0',
+  'time series collection changes', 'aggregation pipeline new features', 'performance improvements'];
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
+function resize() {
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', () => { resize(); layout(); });
+
+const colorFor = (subject) => {
+  const s = String(subject || '');
+  if (s.includes('9.0')) return '#00ed64';
+  if (s.includes('8.0')) return '#4aa3ff';
+  if (s.includes('7.0')) return '#b088f9';
+  return '#f5a524';
+};
+
+let points = [];      // {id, x, y, version, title, color, px, py, phase}
+let releases = [];    // {key, x, y, count, px, py}
+let separations = []; // {a, b, cosine}
+let showSep = false;
+let bounds = null;    // {minX,maxX,minY,maxY}
+let query = null;     // {px, py, t}
+let matches = [];     // {id, score, title, px, py}
+let anim = 0;
+
+function computeBounds(pts) {
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  return { minX, maxX, minY, maxY };
+}
+const padX = () => Math.max(80, W * 0.10);
+const padY = () => Math.max(120, H * 0.16);
+function mapX(x) { const s = (bounds.maxX - bounds.minX) || 1; return padX() + (x - bounds.minX) / s * (W - 2 * padX()); }
+function mapY(y) { const s = (bounds.maxY - bounds.minY) || 1; return H - padY() - (y - bounds.minY) / s * (H - 2 * padY()); }
+function layout() {
+  if (!bounds) return;
+  for (const p of points) { p.px = mapX(p.x); p.py = mapY(p.y); }
+  for (const r of releases) { r.px = mapX(r.x); r.py = mapY(r.y); }
+  for (const m of matches) { const p = byId[m.id]; if (p) { m.px = p.px; m.py = p.py; } }
+  if (query && query.gx != null) { query.px = mapX(query.gx); query.py = mapY(query.gy); }
+}
+let byId = {};
+
+async function boot() {
+  resize();
+  const data = await fetch('/api/changelog/galaxy').then(r => r.json());
+  points = data.points.map((p, i) => ({ ...p, color: colorFor(p.subject), phase: Math.random() * Math.PI * 2 }));
+  releases = data.releases || [];
+  separations = data.separations || [];
+  document.getElementById('count').textContent = points.length;
+  document.getElementById('septog').addEventListener('click', (e) => {
+    showSep = !showSep;
+    e.target.classList.toggle('on', showSep);
+    e.target.textContent = showSep ? 'Hide release separation' : 'Show release separation';
+    const note = document.getElementById('sepnote');
+    note.hidden = !showSep;
+    if (showSep) {
+      const nums = separations.map((s) => `${s.a}\u2194${s.b} ${(1 - s.cosine).toFixed(2)}`).join('  \u00b7  ');
+      note.textContent = `Topical separation (1 \u2212 cosine): ${nums} \u2014 nearly identical, which is why distance \u2260 upgrade risk. Real risk = the breaking-change count.`;
+    }
+  });
+  byId = Object.fromEntries(points.map(p => [p.id, p]));
+  bounds = computeBounds(points);
+  layout();
+  const chips = document.getElementById('chips');
+  CHIPS.forEach(text => {
+    const b = document.createElement('button'); b.className = 'chip'; b.textContent = text; b.type = 'button';
+    b.onclick = () => { document.getElementById('q').value = text; run(text); };
+    chips.appendChild(b);
+  });
+  loop();
+  run(document.getElementById('q').value);
+}
+
+async function run(text) {
+  if (!text.trim()) return;
+  document.getElementById('go').disabled = true;
+  const r = await fetch('/api/changelog/search', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text })
+  }).then(x => x.json()).catch(() => null);
+  document.getElementById('go').disabled = false;
+  if (!r) return;
+  matches = r.results.map(res => ({ id: res.id, score: res.score, title: res.title,
+    px: byId[res.id]?.px ?? W / 2, py: byId[res.id]?.py ?? H / 2 }));
+  if (r.queryPoint) { query = { gx: r.queryPoint[0], gy: r.queryPoint[1], t: 0 }; layout(); }
+  const top = r.results[0];
+  const weak = top && top.score < 0.7;
+  const a = document.getElementById('answer'); a.classList.add('show');
+  document.getElementById('a-title').textContent = top ? top.title : 'No match';
+  document.getElementById('a-score').textContent = top ? top.score.toFixed(3) : '';
+  document.getElementById('a-text').textContent = weak
+    ? 'No strong match — the release notes cover what changed, not how-to usage.'
+    : (top?.text || '');
+  document.getElementById('a-text').className = weak ? 'x warn' : 'x';
+  document.getElementById('a-meta').textContent =
+    `${r.results.length} matches · ${r.durationMs} ms round-trip to Atlas` +
+    (top?.version ? ` · v${top.version}` : '') + (top?.date ? ` · ${top.date}` : '');
+  document.getElementById('stat').innerHTML = `$vectorSearch · <b>${r.durationMs} ms</b> to Atlas`;
+  anim = 0;
+}
+
+document.getElementById('f').addEventListener('submit', (e) => { e.preventDefault(); run(document.getElementById('q').value); });
+
+function loop() {
+  anim += 0.016;
+  ctx.clearRect(0, 0, W, H);
+  const matchIds = new Set(matches.map(m => m.id));
+  // background stars
+  for (const p of points) {
+    const twinkle = 0.55 + 0.45 * Math.sin(anim * 1.2 + p.phase);
+    const isMatch = matchIds.has(p.id);
+    const r = isMatch ? 3.4 + 1.6 * Math.sin(anim * 4) : 1.8;
+    ctx.globalAlpha = isMatch ? 1 : 0.22 + 0.5 * twinkle * (matches.length ? 0.4 : 1);
+    ctx.fillStyle = p.color;
+    if (isMatch) { ctx.shadowColor = p.color; ctx.shadowBlur = 18; } else { ctx.shadowBlur = 0; }
+    ctx.beginPath(); ctx.arc(p.px, p.py, r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  // release centroids + topical separation overlay (dedicated mode)
+  if (showSep && releases.length) {
+    const byRel = Object.fromEntries(releases.map((r) => [r.key, r]));
+    separations.forEach((s) => {
+      const a = byRel[s.a]; const b = byRel[s.b];
+      if (!a || !b) return;
+      ctx.setLineDash([6, 6]); ctx.strokeStyle = 'rgba(238,242,251,0.3)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(a.px, a.py); ctx.lineTo(b.px, b.py); ctx.stroke(); ctx.setLineDash([]);
+    });
+    const cx = releases.reduce((s, r) => s + r.px, 0) / releases.length;
+    const cy = releases.reduce((s, r) => s + r.py, 0) / releases.length;
+    releases.forEach((r, i) => {
+      const col = colorFor(r.key);
+      ctx.shadowColor = col; ctx.shadowBlur = 22; ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(r.px, r.py, 9, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(r.px, r.py, 12, 0, Math.PI * 2); ctx.stroke();
+      const lx = cx + 90; const ly = cy - 34 + i * 24;
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(r.px, r.py); ctx.lineTo(lx - 8, ly - 4); ctx.stroke();
+      ctx.fillStyle = col; ctx.font = '700 14px "Manrope Variable", system-ui';
+      ctx.fillText(`${r.key} · ${r.count}`, lx, ly);
+    });
+    requestAnimationFrame(loop);
+    return;
+  }
+  // query + links
+  if (query) {
+    query.t = Math.min(1, query.t + 0.04);
+    const ease = 1 - Math.pow(1 - query.t, 3);
+    // sort matches so strongest draws last (on top)
+    const ordered = [...matches].sort((a, b) => a.score - b.score);
+    ordered.forEach((m, i) => {
+      const prog = Math.max(0, Math.min(1, (anim * 1.6) - i * 0.12));
+      if (prog <= 0) return;
+      const ex = query.px + (m.px - query.px) * prog;
+      const ey = query.py + (m.py - query.py) * prog;
+      const strong = m.score >= 0.7;
+      ctx.strokeStyle = strong ? 'rgba(0,237,100,' + (0.15 + 0.5 * m.score) + ')' : 'rgba(154,168,199,0.25)';
+      ctx.lineWidth = strong ? 1 + (m.score - 0.6) * 4 : 1;
+      ctx.beginPath(); ctx.moveTo(query.px, query.py); ctx.lineTo(ex, ey); ctx.stroke();
+      if (prog > 0.98) {
+        const rank = ordered.length - 1 - i; // 0 = strongest
+        ctx.fillStyle = strong ? '#00ed64' : '#9aa8c7';
+        ctx.font = '600 12px "IBM Plex Mono", monospace';
+        ctx.fillText(m.score.toFixed(3), m.px + 9, m.py + 4 + rank * 15);
+      }
+    });
+    // query star
+    const qr = 6 + 3 * Math.sin(anim * 5);
+    ctx.shadowColor = '#fff'; ctx.shadowBlur = 24 * ease;
+    ctx.fillStyle = '#fff'; ctx.globalAlpha = ease;
+    ctx.beginPath(); ctx.arc(query.px, query.py, qr, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+    ctx.fillStyle = '#fff'; ctx.font = '700 13px "Manrope Variable", system-ui';
+    ctx.fillText('your question', query.px + 12, query.py + 4);
+  }
+  requestAnimationFrame(loop);
+}
+
+boot();
+</script>
+</body>
+</html>

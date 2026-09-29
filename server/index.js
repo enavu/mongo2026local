@@ -6,7 +6,7 @@ import { scenarios, getScenario } from '../src/data/demo.js';
 import { compatibility, getFeature } from '../src/data/compatibility.js';
 import { serverVersions } from '../src/data/versions.js';
 import { checkDrift } from '../src/lib/drift.js';
-import { askMongo, askRehearsal, close, connect, getVectors, queryShape, runMongo, runRehearsal, searchChangelog } from './store.js';
+import { askMongo, askRehearsal, changelogGalaxy, close, connect, getVectors, queryShape, runMongo, runRehearsal, searchChangelog, upgradeChanges } from './store.js';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const port = Number(process.env.PORT ?? 8137);
@@ -57,6 +57,28 @@ app.post('/api/changelog/search', async (req, res) => {
 app.get('/changelog', (_req, res) => res.sendFile(join(root, 'server/changelog.html')));
 
 app.get('/deck', (_req, res) => res.sendFile(join(root, 'server/deck.html')));
+
+app.get('/galaxy', (_req, res) => res.sendFile(join(root, 'server/galaxy.html')));
+
+app.get('/api/changelog/galaxy', async (_req, res) => {
+  if (!mongoReady) return res.status(409).json({ error: 'mongo-unavailable' });
+  try {
+    return res.json(await changelogGalaxy());
+  } catch (error) {
+    return res.status(500).json({ error: 'galaxy-failed', detail: error.message });
+  }
+});
+
+app.get('/api/upgrade', async (req, res) => {
+  const to = String(req.query.to ?? '').trim();
+  if (!to) return res.status(400).json({ error: 'missing-to' });
+  if (!mongoReady) return res.status(409).json({ error: 'mongo-unavailable' });
+  try {
+    return res.json(await upgradeChanges(to, dbName));
+  } catch (error) {
+    return res.status(502).json({ error: 'upgrade-failed', detail: error.message });
+  }
+});
 
 app.post('/api/drift', (req, res) => {
   const feature = getFeature(req.body?.feature);

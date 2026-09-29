@@ -19,6 +19,28 @@ export const compatibility = [
       node: '6.6.0', python: '4.7', go: '2', java: '5', csharp: '3', 'c++': '3.11.0', rust: '3.1.0',
     },
   },
+  {
+    feature: 'queryableEncryption',
+    label: 'Queryable Encryption (equality)',
+    text: 'Queryable Encryption with equality queries is generally available starting in MongoDB 7.0. Earlier server versions do not support GA Queryable Encryption.',
+    source: {
+      title: 'Queryable Encryption',
+      url: 'https://www.mongodb.com/docs/manual/core/queryable-encryption/',
+    },
+    server: { ann: [{ line: '7.0', min: '7.0.0' }] },
+    drivers: {},
+  },
+  {
+    feature: 'timeSeries',
+    label: 'Time Series collections',
+    text: 'Time series collections are generally available starting in MongoDB 5.0.',
+    source: {
+      title: 'Time Series Collections',
+      url: 'https://www.mongodb.com/docs/manual/core/timeseries-collections/',
+    },
+    server: { ann: [{ line: '5.0', min: '5.0.0' }] },
+    drivers: {},
+  },
 ];
 
 export function getFeature(name) {

@@ -53,7 +53,10 @@ function checkDriver(driver, driverVersion, mins) {
 export function checkDrift({ feature, serverVersion, driver, driverVersion, searchType = 'ann' }) {
   const lines = feature.server[searchType] ?? feature.server.ann;
   const server = checkServer(serverVersion, lines);
-  const driverResult = driver ? checkDriver(driver, driverVersion, feature.drivers) : { known: false, skipped: true };
+  const hasDrivers = feature.drivers && Object.keys(feature.drivers).length > 0;
+  const driverResult = (driver && hasDrivers)
+    ? checkDriver(driver, driverVersion, feature.drivers)
+    : { known: false, skipped: true, serverOnly: !hasDrivers };
 
   const reasons = [];
   if (server.ok === false) reasons.push(`server ${serverVersion} is below the ${searchType.toUpperCase()} minimum ${server.required}`);
@@ -62,12 +65,12 @@ export function checkDrift({ feature, serverVersion, driver, driverVersion, sear
   let verdict = 'supported';
   if (server.provisional) verdict = 'provisional';
   if (reasons.length) verdict = 'drift';
-  else if (!server.provisional && driver && !driverResult.known) verdict = 'unknown-driver';
+  else if (!server.provisional && driver && hasDrivers && !driverResult.known) verdict = 'unknown-driver';
 
   return {
     feature: feature.feature, searchType, verdict, reasons,
     server: { version: serverVersion, ...server },
-    driver: driver ? { name: driver, version: driverVersion, ...driverResult } : null,
+    driver: (driver && hasDrivers) ? { name: driver, version: driverVersion, ...driverResult } : null,
     source: feature.source,
   };
 }

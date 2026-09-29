@@ -38,6 +38,116 @@ export async function getVectors() {
   return { points };
 }
 
+// --- Changelog galaxy: 2D projection of the whole changelog corpus + queries ---
+let galaxy;
+
+function pca2d(rows) {
+  const n = rows.length;
+  const d = rows[0].length;
+  const mean = new Array(d).fill(0);
+  for (const row of rows) for (let j = 0; j < d; j += 1) mean[j] += row[j] / n;
+  const centered = rows.map((row) => row.map((value, j) => value - mean[j]));
+  const gram = centered.map((a) => centered.map((b) => dot(a, b)));
+  const normalize = (v) => { const m = Math.sqrt(dot(v, v)) || 1; return v.map((x) => x / m); };
+  const power = (matrix, iterations = 160) => {
+    let v = normalize(Array.from({ length: matrix.length }, (_, i) => Math.sin(i + 1)));
+    for (let s = 0; s < iterations; s += 1) v = normalize(matrix.map((row) => dot(row, v)));
+    return { v, lambda: dot(v, matrix.map((row) => dot(row, v))) };
+  };
+  const first = power(gram);
+  const deflated = gram.map((row, i) => row.map((value, k) => value - first.lambda * first.v[i] * first.v[k]));
+  const second = power(deflated);
+  const axis = (u) => {
+    const w = new Array(d).fill(0);
+    for (let i = 0; i < n; i += 1) for (let j = 0; j < d; j += 1) w[j] += u[i] * centered[i][j];
+    return normalize(w);
+  };
+  const w1 = axis(first.v);
+  const w2 = axis(second.v);
+  return { mean, w1, w2, points: centered.map((c) => [dot(c, w1), dot(c, w2)]) };
+}
+
+async function loadGalaxy() {
+  if (galaxy) return galaxy;
+  const data = JSON.parse(await readFile(join(root, 'src/data/changelog.json'), 'utf8'));
+  const basis = pca2d(data.docs.map((doc) => doc.embedding));
+  const points = data.docs.map((doc, i) => ({
+    id: doc._id, x: basis.points[i][0], y: basis.points[i][1],
+    version: doc.version, subject: doc.subject, title: doc.title,
+  }));
+
+  // Group by release and compute a centroid per release: a 2D position (same
+  // basis as the points) and a normalized 384-d vector for true cosine distance.
+  const relKey = (s) => {
+    const t = String(s || '');
+    if (t.includes('9.0')) return '9.0';
+    if (t.includes('8.0')) return '8.0';
+    if (t.includes('7.0')) return '7.0';
+    return 'mongosh';
+  };
+  const groups = {};
+  data.docs.forEach((doc) => { (groups[relKey(doc.subject)] ??= []).push(doc.embedding); });
+  const dim = data.docs[0].embedding.length;
+  const unit = {};
+  const releases = [];
+  for (const [key, vecs] of Object.entries(groups)) {
+    const mean = new Array(dim).fill(0);
+    vecs.forEach((v) => { for (let j = 0; j < dim; j += 1) mean[j] += v[j] / vecs.length; });
+    const centered = mean.map((v, i) => v - basis.mean[i]);
+    const m = Math.sqrt(dot(mean, mean)) || 1;
+    unit[key] = mean.map((x) => x / m);
+    releases.push({ key, x: dot(centered, basis.w1), y: dot(centered, basis.w2), count: vecs.length });
+  }
+  const order = ['7.0', '8.0', '9.0'];
+  const separations = [];
+  for (let i = 0; i < order.length; i += 1) {
+    for (let j = i + 1; j < order.length; j += 1) {
+      const a = order[i]; const b = order[j];
+      if (unit[a] && unit[b]) separations.push({ a, b, cosine: dot(unit[a], unit[b]) });
+    }
+  }
+  galaxy = { basis: { mean: basis.mean, w1: basis.w1, w2: basis.w2 }, points, releases, separations };
+  return galaxy;
+}
+
+function projectGalaxy(vector) {
+  if (!galaxy) return null;
+  const centered = vector.map((value, i) => value - galaxy.basis.mean[i]);
+  return [dot(centered, galaxy.basis.w1), dot(centered, galaxy.basis.w2)];
+}
+
+export async function changelogGalaxy() {
+  const { points, releases, separations } = await loadGalaxy();
+  return { points, releases, separations };
+}
+
+// Breaking/compatibility changes to review when upgrading to a target version,
+// plus the non-breaking gains (new features, improvements), both from that
+// version's compatibility page and release notes in Atlas.
+export async function upgradeChanges(to, dbName) {
+  if (!client) throw new Error('not-connected');
+  const collection = client.db(dbName).collection('changelog');
+  const escaped = to.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const changes = await collection.find({
+    $or: [
+      { subject: new RegExp(`${escaped} Compatibility`, 'i') },
+      { subject: new RegExp(`${escaped} Release`, 'i'), title: /incompat|deprecat|removed|breaking|compatib/i },
+    ],
+  }).project({ _id: 0, title: 1, text: 1, source: 1 }).toArray();
+
+  const releaseDocs = await collection.find({ subject: new RegExp(`${escaped} Release`, 'i') })
+    .project({ _id: 0, title: 1, text: 1, source: 1 }).toArray();
+  const isPatch = (t) => /^\d+\.\d+\.\d+/.test(t);
+  const isBreaking = (t) => /incompat|deprecat|removed|breaking|compatib/i.test(t);
+  const isNoise = (t) => /known issues|general changes|report an issue/i.test(t);
+  const gains = releaseDocs
+    .filter((d) => !isPatch(d.title) && !isBreaking(d.title) && !isNoise(d.title))
+    .slice(0, 12);
+
+  const shape = (c) => ({ title: c.title, text: c.text ?? '', url: c.source?.url ?? null });
+  return { to, count: changes.length, changes: changes.map(shape), gains: gains.map(shape) };
+}
+
 async function embedText(text) {
   if (!embedder) embedder = await pipeline('feature-extraction', MODEL, { dtype: 'q8' });
   const output = await embedder(text, { pooling: 'mean', normalize: true });
@@ -138,18 +248,22 @@ export async function askMongo(text, dbName) {
 export async function searchChangelog(text, dbName, limit = 6) {
   if (!client) throw new Error('not-connected');
   await loadEmbeddings();
+  await loadGalaxy();
   const collection = client.db(dbName).collection('changelog');
   const started = performance.now();
   const queryVector = await embedText(text);
   const hits = await collection.aggregate([
     { $vectorSearch: { index: 'chlog_vec', path: 'embedding', queryVector, numCandidates: 150, limit } },
-    { $project: { _id: 0, title: 1, version: 1, effective_at: 1, source: 1,
+    { $project: { _id: 1, title: 1, text: 1, version: 1, effective_at: 1, source: 1,
       score: { $meta: 'vectorSearchScore' } } },
   ]).toArray();
   return {
     durationMs: Math.round(performance.now() - started),
+    queryPoint: projectGalaxy(queryVector),
     results: hits.map((hit) => ({
+      id: hit._id,
       title: hit.title,
+      text: hit.text ?? '',
       version: hit.version ?? null,
       date: hit.effective_at ? new Date(hit.effective_at).toISOString().slice(0, 10) : null,
       url: hit.source?.url ?? null,

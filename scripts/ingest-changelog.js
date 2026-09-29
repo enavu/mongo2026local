@@ -17,8 +17,11 @@ const SOURCES = [
   { url: 'https://www.mongodb.com/docs/mongodb-shell/changelog.md', title: 'mongosh Changelog' },
 ];
 
-const MAX_PER_SOURCE = 80;
+const MAX_PER_SOURCE = 500;
 const MIN_CHARS = 60;
+
+// Content-free changelog stubs (mostly mongosh "internal improvements … on JIRA").
+const NOISE = /available on jira|internal (enhancements|improvements)|no changes|minor (fixes|improvements)/i;
 
 function slug(text) {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
@@ -54,7 +57,7 @@ function chunkMarkdown(markdown, source) {
   const flush = () => {
     if (!heading) return;
     const text = clean(body.join(' '));
-    if (text.length >= MIN_CHARS) {
+    if (text.length >= MIN_CHARS && !NOISE.test(text)) {
       chunks.push({ heading: clean(heading), text: `${clean(heading)}. ${text}`.slice(0, 900) });
     }
     body = [];
