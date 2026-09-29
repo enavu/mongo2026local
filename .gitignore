@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.cache/
+test-results/
+playwright-report/
+recordings/
+.DS_Store
+src/data/changelog.json
+
+# secrets
+atlas-credentials.env

@@ -1,0 +1,16 @@
+services:
+  mongodb:
+    image: mongodb/mongodb-atlas-local:8.0
+    container_name: memory-demo-mongo
+    ports:
+      - "127.0.0.1:27779:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+    volumes:
+      - mongo-demo-data:/data/db
+
+volumes:
+  mongo-demo-data:

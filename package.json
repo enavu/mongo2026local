@@ -1,0 +1,47 @@
+{
+  "name": "memory-that-keeps-up",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k \"node --env-file-if-exists=.env --env-file-if-exists=atlas-credentials.env --watch server/index.js\" \"vite --host 127.0.0.1\"",
+    "build": "vite build",
+    "start": "node --env-file-if-exists=.env --env-file-if-exists=atlas-credentials.env server/index.js",
+    "test": "node --test tests/*.test.js",
+    "test:mongo": "node --env-file-if-exists=.env --env-file-if-exists=atlas-credentials.env --test tests/mongo.integration.js",
+    "test:browser": "playwright test",
+    "record": "node scripts/record-demo.js",
+    "record:run": "node scripts/record-run.js",
+    "embeddings": "node scripts/embeddings.js",
+    "ingest:changelog": "node scripts/ingest-changelog.js",
+    "seed": "node --env-file-if-exists=.env --env-file-if-exists=atlas-credentials.env scripts/seed.js",
+    "seed:changelog": "node --env-file-if-exists=.env --env-file-if-exists=atlas-credentials.env scripts/seed-changelog.js",
+    "seed:compat": "node --env-file-if-exists=.env --env-file-if-exists=atlas-credentials.env scripts/seed-compat.js",
+    "drift": "node scripts/drift.js",
+    "check:release": "node scripts/check-release.js",
+    "check:atlas": "node --env-file-if-exists=.env --env-file-if-exists=atlas-credentials.env scripts/check-atlas.js",
+    "db:up": "docker compose up -d --wait",
+    "db:stop": "docker compose stop",
+    "lint:docs": "markdownlint SPEC.md README.md --disable MD013 MD060"
+  },
+  "dependencies": {
+    "@fontsource-variable/manrope": "5.3.0",
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "express": "5.2.1",
+    "lucide-react": "1.48.0",
+    "mongodb": "7.6.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@huggingface/transformers": "4.3.0",
+    "@playwright/test": "1.63.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "concurrently": "10.0.5",
+    "markdownlint-cli": "0.49.1",
+    "vite": "8.3.1"
+  }
+}
